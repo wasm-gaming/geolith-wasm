@@ -104,7 +104,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wasm-dist
-          path: dist
+          # Artifact is rooted at dist/geolith/, so it must be restored there.
+          path: dist/geolith
 
       - name: Upgrade npm for OIDC trusted publishing
         run: |
