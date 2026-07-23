@@ -9,6 +9,7 @@ import type {
 import { manifest } from './geolith.manifest.js';
 import {
   DEFAULT_GEOLITH_OPTIONS,
+  GEOLITH_INPUT_MODE_IDS,
   GEOLITH_REGION_IDS,
   GEOLITH_SYSTEM_IDS,
   type GeolithOptions,
@@ -18,8 +19,8 @@ export { manifest };
 
 /**
  * Shape of the Emscripten module produced by scripts/build-geolith.sh
- * (`-sMODULARIZE -sEXPORT_NAME=createGeolithModule`, no filesystem, heap
- * views exported). All engine entry points are flat C exports from
+ * (`-sMODULARIZE -sEXPORT_NAME=createGeolithModule`, heap views + ccall
+ * exported). All engine entry points are flat C exports from
  * shim/geo_shim.c — no SDL, no main loop, no ASYNCIFY: the SDK drives one
  * `_geowasm_exec()` per emulated frame.
  */
@@ -28,10 +29,13 @@ type GeolithModule = {
   HEAP16: Int16Array;
   _malloc(size: number): number;
   _free(ptr: number): void;
-  _geowasm_setup(system: number, region: number, samplerate: number): void;
+  _geowasm_setup(system: number, region: number, samplerate: number, unihw: number): void;
   _geowasm_load_bios(ptr: number, size: number): number;
+  _geowasm_load_bios_aux(ptr: number, size: number): number;
   _geowasm_load_rom(ptr: number, size: number): number;
   _geowasm_neo_flags(): number;
+  _geowasm_disc_unzip(ptr: number, size: number): number;
+  _geowasm_disc_open_auto(): number;
   _geowasm_reset(hard: number): void;
   _geowasm_exec(): number;
   _geowasm_audio_ptr(): number;
@@ -39,8 +43,13 @@ type GeolithModule = {
   _geowasm_frame_rgba(x: number, y: number, w: number, h: number): number;
   _geowasm_input(port: number, mask: number): void;
   _geowasm_input_sys(mask: number): void;
+  _geowasm_input_axis(dx: number, dy: number): void;
+  _geowasm_set_input_mode(mode: number): void;
   _geowasm_set_dips(freeplay: number, settingmode: number): void;
   _geowasm_set_memcard(inserted: number, wp: number): void;
+  _geowasm_set_palette(raw: number): void;
+  _geowasm_set_adpcm_wrap(wrap: number): void;
+  _geowasm_set_overclock(oc: number): void;
   _geowasm_state_size(): number;
   _geowasm_state_save(): number;
   _geowasm_state_load(ptr: number): number;
@@ -54,20 +63,32 @@ type GeolithModuleFactory = (
   overrides: Record<string, unknown>,
 ) => Promise<GeolithModule>;
 
-// geo.h framerates: the AES and MVS master clocks differ slightly.
+// geo.h framerates: MVS/UNI run at the MVS rate; AES and the CD systems at
+// the AES rate (matches geo_mixer_init()).
 const FRAMERATE_AES = 59.599484;
 const FRAMERATE_MVS = 59.185606;
+
+// geo_neo.h database flags for special-controller games.
+const DB_MAHJONG = 0x01;
+const DB_IRRMAZE = 0x02;
+const DB_VLINER = 0x04;
 
 // geo.h geo_memtype values for battery-backed regions we persist.
 const MEMTYPE_NVRAM = 4;
 const MEMTYPE_CARTRAM = 5;
 const MEMTYPE_MEMCARD = 7;
+const MEMTYPE_CDBRAM = 9;
 
 const SAVEDATA_FILES: Array<{ type: number; file: string }> = [
   { type: MEMTYPE_NVRAM, file: 'nvram.bin' },
   { type: MEMTYPE_CARTRAM, file: 'cartram.bin' },
   { type: MEMTYPE_MEMCARD, file: 'memcard.bin' },
+  { type: MEMTYPE_CDBRAM, file: 'cdbram.bin' },
 ];
+
+// The active input device, resolved after ROM load (mirrors the shim's
+// shim_params_input decision).
+type InputDevice = 'js' | 'mahjong' | 'vliner' | 'irrmaze';
 
 /**
  * Default keyboard bindings (KeyboardEvent.code → control), following the
@@ -100,30 +121,117 @@ const DEFAULT_KEYMAP: Record<string, string> = {
   'sys.test': 'F2',
 };
 
+/** Mahjong panel: tiles A–N on their letter keys, calls on the row above. */
+const MAHJONG_KEYMAP: Record<string, string> = {
+  'p1.pon': 'KeyO',
+  'p1.chi': 'KeyP',
+  'p1.kan': 'BracketLeft',
+  'p1.reach': 'BracketRight',
+  'p1.ron': 'Backslash',
+  'p1.start': 'Digit1',
+  'p1.select': 'Digit3',
+  'sys.coin1': 'Digit5',
+  'sys.coin2': 'Digit6',
+  'sys.service': 'Digit9',
+  'sys.test': 'F2',
+};
+for (let i = 0; i < 14; i++) {
+  const letter = String.fromCharCode(65 + i); // A..N
+  MAHJONG_KEYMAP[`p1.mj${letter.toLowerCase()}`] = `Key${letter}`;
+}
+
+const VLINER_KEYMAP: Record<string, string> = {
+  'p1.up': 'ArrowUp',
+  'p1.down': 'ArrowDown',
+  'p1.left': 'ArrowLeft',
+  'p1.right': 'ArrowRight',
+  'p1.big': 'KeyZ',
+  'p1.small': 'KeyX',
+  'p1.dup': 'KeyC',
+  'p1.start': 'Digit1',
+  'p1.operator': 'KeyO',
+  'p1.clearcredit': 'KeyP',
+  'p1.hopperout': 'KeyU',
+  'sys.coin1': 'Digit5',
+  'sys.coin2': 'Digit6',
+  'sys.service': 'Digit9',
+  'sys.test': 'F2',
+};
+
+/** Trackball movement comes from the mouse; buttons on the keyboard. */
+const IRRMAZE_KEYMAP: Record<string, string> = {
+  'p1.lefta': 'KeyZ',
+  'p1.leftb': 'KeyX',
+  'p1.righta': 'KeyC',
+  'p1.rightb': 'KeyV',
+  'p1.start': 'Digit1',
+  'sys.coin1': 'Digit5',
+  'sys.coin2': 'Digit6',
+  'sys.service': 'Digit9',
+  'sys.test': 'F2',
+};
+
+/** Extra P3/P4 bindings layered on top of DEFAULT_KEYMAP in 4-player mode. */
+const FOURP_EXTRA_KEYMAP: Record<string, string> = {
+  'p3.up': 'KeyT',
+  'p3.down': 'KeyF',
+  'p3.left': 'KeyR',
+  'p3.right': 'KeyY',
+  'p3.a': 'Digit7',
+  'p3.b': 'Digit8',
+  'p3.start': 'F3',
+  'p4.up': 'Numpad8',
+  'p4.down': 'Numpad5',
+  'p4.left': 'Numpad4',
+  'p4.right': 'Numpad6',
+  'p4.a': 'Numpad1',
+  'p4.b': 'Numpad2',
+  'p4.start': 'F4',
+};
+
 // Extra codes always accepted on top of the active map (QoL aliases).
 const KEYMAP_ALIASES: Record<string, string> = {
   Enter: 'p1.start',
   ShiftRight: 'p1.select',
 };
 
-// Control name → (port, bit) for the shim's active-high masks.
-// Ports 0/1: bit 0-3 directions, 4-7 A/B/C/D, 8 start, 9 select.
-// Sys (port -1): bit 0 coin1, 1 coin2, 2 service, 3 test.
-const CONTROL_BITS: Record<string, { port: number; bit: number }> = {
-  up: { port: 0, bit: 0 },
-  down: { port: 0, bit: 1 },
-  left: { port: 0, bit: 2 },
-  right: { port: 0, bit: 3 },
-  a: { port: 0, bit: 4 },
-  b: { port: 0, bit: 5 },
-  c: { port: 0, bit: 6 },
-  d: { port: 0, bit: 7 },
-  start: { port: 0, bit: 8 },
-  select: { port: 0, bit: 9 },
-  coin1: { port: -1, bit: 0 },
-  coin2: { port: -1, bit: 1 },
-  service: { port: -1, bit: 2 },
-  test: { port: -1, bit: 3 },
+// Control-name → bit index within a player's active-high mask, per device.
+// Port -1 marks system buttons (coin/service/test).
+const JS_BITS: Record<string, number> = {
+  up: 0, down: 1, left: 2, right: 3,
+  a: 4, b: 5, c: 6, d: 7,
+  start: 8, select: 9,
+};
+const MAHJONG_BITS: Record<string, number> = {
+  mja: 0, mjb: 1, mjc: 2, mjd: 3, mje: 4, mjf: 5, mjg: 6,
+  mjh: 7, mji: 8, mjj: 9, mjk: 10, mjl: 11, mjm: 12, mjn: 13,
+  pon: 14, chi: 15, kan: 16, reach: 17, ron: 18,
+  select: 19, start: 20,
+};
+const VLINER_BITS: Record<string, number> = {
+  up: 0, down: 1, left: 2, right: 3,
+  big: 4, small: 5, dup: 6, start: 7,
+  operator: 8, clearcredit: 9, hopperout: 10,
+};
+const IRRMAZE_BITS: Record<string, number> = {
+  lefta: 0, leftb: 1, righta: 2, rightb: 3, start: 4,
+};
+const SYS_BITS: Record<string, number> = {
+  coin1: 0, coin2: 1, service: 2, test: 3,
+};
+
+const DEVICE_BITS: Record<InputDevice, Record<string, number>> = {
+  js: JS_BITS,
+  mahjong: MAHJONG_BITS,
+  vliner: VLINER_BITS,
+  irrmaze: IRRMAZE_BITS,
+};
+
+const DEVICE_KEYMAPS: Record<InputDevice, Record<string, string>> = {
+  js: DEFAULT_KEYMAP,
+  mahjong: MAHJONG_KEYMAP,
+  vliner: VLINER_KEYMAP,
+  irrmaze: IRRMAZE_KEYMAP,
 };
 
 /** AudioWorklet processor: a simple SPSC float ring fed int16 chunks. */
@@ -234,6 +342,13 @@ async function opfsDir(
   }
 }
 
+/** Copy bytes into the WASM heap; returns the pointer (caller frees). */
+function heapAlloc(mod: GeolithModule, bytes: Uint8Array): number {
+  const ptr = mod._malloc(bytes.length);
+  mod.HEAPU8.set(bytes, ptr);
+  return ptr;
+}
+
 export async function load(config: EngineConfig): Promise<EngineInstance> {
   const { assets, onEvent } = config;
 
@@ -250,14 +365,24 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
     ...(config.options as GeolithOptions | undefined),
   };
 
+  const isCd = GEOLITH_SYSTEM_IDS[opts.system] >= 3;
+
   const romBytes = toUint8(assets?.rom ?? assets?.data);
   if (!romBytes) {
-    throw new Error('geolith: no ROM provided — pass assets.rom (a .neo cartridge image)');
+    throw new Error(
+      'geolith: no ROM provided — pass assets.rom (a .neo cartridge image, or a zip of .cue/.bin for the CD systems)',
+    );
   }
   const biosBytes = toUint8(assets?.bios);
   if (!biosBytes) {
     throw new Error(
-      'geolith: no BIOS provided — pass assets.bios (MAME neogeo.zip for MVS/Universe, aes.zip for AES)',
+      'geolith: no BIOS provided — pass assets.bios (MAME neogeo.zip for MVS/Universe, aes.zip for AES, neocd.zip/neocdz.zip for CD)',
+    );
+  }
+  const bios2Bytes = toUint8(assets?.bios2);
+  if (isCd && (opts.system === 'cdf' || opts.system === 'cdt') && !bios2Bytes) {
+    throw new Error(
+      'geolith: the CD front/top loaders also need assets.bios2 = neocdz.zip (supplies 000-lo.lo)',
     );
   }
 
@@ -278,7 +403,8 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
   // ---------------------------------------------------------------- audio
   const audioCtx = new AudioContext();
   const sampleRate = Math.round(audioCtx.sampleRate);
-  const framerate = opts.system === 'aes' ? FRAMERATE_AES : FRAMERATE_MVS;
+  const framerate =
+    opts.system === 'mvs' || opts.system === 'uni' ? FRAMERATE_MVS : FRAMERATE_AES;
   const framesPerExec = sampleRate / framerate;
 
   const workletUrl = URL.createObjectURL(
@@ -324,27 +450,57 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
     GEOLITH_SYSTEM_IDS[opts.system],
     GEOLITH_REGION_IDS[opts.region],
     sampleRate,
+    GEOLITH_SYSTEM_IDS[opts.unihw],
   );
+  mod._geowasm_set_input_mode(GEOLITH_INPUT_MODE_IDS[opts.inputMode]);
   mod._geowasm_set_dips(opts.freeplay ? 1 : 0, opts.settingMode ? 1 : 0);
-  mod._geowasm_set_memcard(opts.memcard ? 1 : 0, 0);
+  mod._geowasm_set_memcard(opts.memcard ? 1 : 0, opts.memcardWriteProtect ? 1 : 0);
+  mod._geowasm_set_palette(opts.rawPalette ? 1 : 0);
+  mod._geowasm_set_adpcm_wrap(opts.adpcmWrap ? 1 : 0);
+  mod._geowasm_set_overclock(opts.overclock ? 1 : 0);
 
-  const biosPtr = mod._malloc(biosBytes.length);
-  mod.HEAPU8.set(biosBytes, biosPtr);
+  const biosPtr = heapAlloc(mod, biosBytes);
   const biosOk = mod._geowasm_load_bios(biosPtr, biosBytes.length);
   mod._free(biosPtr);
   if (!biosOk) {
+    const expected = isCd
+      ? opts.system === 'cdf' || opts.system === 'cdt' ? 'neocd.zip' : 'neocdz.zip'
+      : opts.system === 'aes' ? 'aes.zip' : 'neogeo.zip';
     throw new Error(
-      `geolith: BIOS load failed — expecting a MAME-format ${
-        opts.system === 'aes' ? 'aes.zip' : 'neogeo.zip'
-      } (with correct ROM names/CRCs inside)`,
+      `geolith: BIOS load failed — expecting a MAME-format ${expected} (with correct ROM names/CRCs inside)`,
     );
   }
 
-  // The core aliases ROM regions directly into this buffer; never freed.
-  const romPtr = mod._malloc(romBytes.length);
-  mod.HEAPU8.set(romBytes, romPtr);
-  if (!mod._geowasm_load_rom(romPtr, romBytes.length)) {
-    throw new Error('geolith: ROM load failed — is this a valid .neo file?');
+  let neoFlags = 0;
+  if (isCd) {
+    // CD front/top loaders take 000-lo.lo from the auxiliary neocdz.zip.
+    if (bios2Bytes && (opts.system === 'cdf' || opts.system === 'cdt')) {
+      const auxPtr = heapAlloc(mod, bios2Bytes);
+      const auxOk = mod._geowasm_load_bios_aux(auxPtr, bios2Bytes.length);
+      mod._free(auxPtr);
+      if (!auxOk) throw new Error('geolith: auxiliary BIOS (neocdz.zip) load failed');
+    }
+    // Unzip the disc image into MEMFS and open its cue sheet.
+    const discPtr = heapAlloc(mod, romBytes);
+    const files = mod._geowasm_disc_unzip(discPtr, romBytes.length);
+    mod._free(discPtr);
+    if (!files) throw new Error('geolith: disc image unzip failed — pass a zip of .cue/.bin');
+    if (!mod._geowasm_disc_open_auto()) {
+      throw new Error('geolith: disc open failed — the zip must contain a .cue and its .bin(s)');
+    }
+  } else {
+    // The core aliases ROM regions directly into this buffer; never freed.
+    const romPtr = heapAlloc(mod, romBytes);
+    if (!mod._geowasm_load_rom(romPtr, romBytes.length)) {
+      throw new Error('geolith: ROM load failed — is this a valid .neo file?');
+    }
+    neoFlags = mod._geowasm_neo_flags();
+    // The Irritating Maze wants its own aux BIOS (irrmaze.zip) on MVS.
+    if (neoFlags & DB_IRRMAZE && bios2Bytes) {
+      const auxPtr = heapAlloc(mod, bios2Bytes);
+      mod._geowasm_load_bios_aux(auxPtr, bios2Bytes.length);
+      mod._free(auxPtr);
+    }
   }
 
   // ---------------------------------------------------------- persistence
@@ -359,8 +515,7 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
       try {
         const handle = await dir.getFileHandle(file);
         const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-        const ptr = mod._malloc(bytes.length);
-        mod.HEAPU8.set(bytes, ptr);
+        const ptr = heapAlloc(mod, bytes);
         mod._geowasm_savedata_restore(type, ptr, bytes.length);
         mod._free(ptr);
       } catch {
@@ -396,44 +551,88 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
   mod._geowasm_reset(1);
 
   // ---------------------------------------------------------------- input
-  let p1Mask = 0;
-  let p2Mask = 0;
-  let sysMask = 0;
+  // Resolve the active device the same way the shim does.
+  const device: InputDevice = (() => {
+    if (isCd) return 'js';
+    if (
+      opts.inputMode === 'mahjong' ||
+      (opts.inputMode === 'auto' && neoFlags & DB_MAHJONG)
+    )
+      return 'mahjong';
+    if (neoFlags & DB_IRRMAZE && opts.system === 'mvs') return 'irrmaze';
+    if (neoFlags & DB_VLINER) return 'vliner';
+    return 'js';
+  })();
+  const fourPlayer =
+    device === 'js' &&
+    opts.inputMode === '4p' &&
+    opts.system === 'mvs' &&
+    (opts.region === 'jp' || opts.region === 'as');
+
+  const keyMasks = [0, 0, 0, 0];
+  const padMasks = [0, 0, 0, 0];
+  let keySysMask = 0;
+  let padSysMask = 0;
+  const sentMasks = [-1, -1, -1, -1];
+  let sentSysMask = -1;
   let codeToControl = new Map<string, { port: number; bit: number }>();
+
+  const pushInputs = (): void => {
+    for (let p = 0; p < 4; p++) {
+      const mask = keyMasks[p] | padMasks[p];
+      if (mask !== sentMasks[p]) {
+        sentMasks[p] = mask;
+        mod._geowasm_input(p, mask);
+      }
+    }
+    const sys = keySysMask | padSysMask;
+    if (sys !== sentSysMask) {
+      sentSysMask = sys;
+      mod._geowasm_input_sys(sys);
+    }
+  };
 
   const buildKeymap = (map: Record<string, string>): void => {
     codeToControl = new Map();
+    const bits = DEVICE_BITS[device];
     const bind = (action: string, code: string): void => {
       const dot = action.indexOf('.');
-      if (dot < 0) return;
+      if (dot < 0 || !code) return;
       const scope = action.slice(0, dot);
       const name = action.slice(dot + 1);
-      const spec = CONTROL_BITS[name];
-      if (!spec || !code) return;
-      const port = scope === 'p2' ? 1 : scope === 'sys' ? -1 : 0;
-      codeToControl.set(code, { port: spec.port === -1 ? -1 : port, bit: spec.bit });
+      if (scope === 'sys') {
+        const bit = SYS_BITS[name];
+        if (bit !== undefined) codeToControl.set(code, { port: -1, bit });
+        return;
+      }
+      const port = { p1: 0, p2: 1, p3: 2, p4: 3 }[scope];
+      const bit = bits[name];
+      if (port !== undefined && bit !== undefined)
+        codeToControl.set(code, { port, bit });
     };
     for (const [action, code] of Object.entries(map)) bind(action, code);
     for (const [code, action] of Object.entries(KEYMAP_ALIASES)) {
       if (!codeToControl.has(code)) bind(action, code);
     }
   };
-  buildKeymap(DEFAULT_KEYMAP);
+  const defaultKeymap = (): Record<string, string> =>
+    fourPlayer
+      ? { ...DEFAULT_KEYMAP, ...FOURP_EXTRA_KEYMAP }
+      : DEVICE_KEYMAPS[device];
+  buildKeymap(defaultKeymap());
 
   const applyKey = (code: string, down: boolean): boolean => {
     const ctl = codeToControl.get(code);
     if (!ctl) return false;
     const bit = 1 << ctl.bit;
     if (ctl.port === -1) {
-      sysMask = down ? sysMask | bit : sysMask & ~bit;
-      mod._geowasm_input_sys(sysMask);
-    } else if (ctl.port === 1) {
-      p2Mask = down ? p2Mask | bit : p2Mask & ~bit;
-      mod._geowasm_input(1, p2Mask);
+      keySysMask = down ? keySysMask | bit : keySysMask & ~bit;
     } else {
-      p1Mask = down ? p1Mask | bit : p1Mask & ~bit;
-      mod._geowasm_input(0, p1Mask);
+      keyMasks[ctl.port] = down
+        ? keyMasks[ctl.port] | bit
+        : keyMasks[ctl.port] & ~bit;
     }
+    pushInputs();
     return true;
   };
 
@@ -446,6 +645,57 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
   };
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
+
+  // Trackball (The Irritating Maze): mouse movement over the canvas.
+  let mouseDx = 0;
+  let mouseDy = 0;
+  const onMouseMove = (e: MouseEvent): void => {
+    mouseDx += e.movementX;
+    mouseDy += e.movementY;
+  };
+  if (device === 'irrmaze') canvas.addEventListener('mousemove', onMouseMove);
+  const TRACKBALL_SCALE = 256;
+
+  /**
+   * Gamepad polling (standard mapping): d-pad/left stick → directions,
+   * face buttons → A/B/C/D, start(9) → start, select(8) → coin, LB(4) →
+   * select. Only wired for joystick-style devices.
+   */
+  const pollGamepads = (): void => {
+    if (!opts.gamepads || device !== 'js' || !navigator.getGamepads) return;
+    const pads = navigator.getGamepads();
+    const maxPads = fourPlayer ? 4 : 2;
+    let sys = 0;
+    let changed = false;
+    for (let p = 0; p < maxPads; p++) {
+      const pad = pads[p];
+      let mask = 0;
+      if (pad && pad.connected) {
+        const btn = (i: number): boolean => !!pad.buttons[i]?.pressed;
+        const ax = (i: number): number => pad.axes[i] ?? 0;
+        if (btn(12) || ax(1) < -0.4) mask |= 0x01; // up
+        if (btn(13) || ax(1) > 0.4) mask |= 0x02; // down
+        if (btn(14) || ax(0) < -0.4) mask |= 0x04; // left
+        if (btn(15) || ax(0) > 0.4) mask |= 0x08; // right
+        if (btn(0)) mask |= 0x10; // A
+        if (btn(1)) mask |= 0x20; // B
+        if (btn(2)) mask |= 0x40; // C
+        if (btn(3)) mask |= 0x80; // D
+        if (btn(9)) mask |= 0x100; // start
+        if (btn(4)) mask |= 0x200; // select (LB)
+        if (btn(8)) sys |= p % 2 === 0 ? 0x01 : 0x02; // coin (back/select)
+      }
+      if (mask !== padMasks[p]) {
+        padMasks[p] = mask;
+        changed = true;
+      }
+    }
+    if (sys !== padSysMask) {
+      padSysMask = sys;
+      changed = true;
+    }
+    if (changed) pushInputs();
+  };
 
   // Browsers may refuse to start audio without a user gesture; retry on the
   // next interaction if the context comes up suspended.
@@ -471,16 +721,13 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
   let fpsWindowStart = 0;
   let persistTimer: ReturnType<typeof setInterval> | null = null;
 
-  const audioHeap = (): Int16Array => mod.HEAP16;
-
   const runFrames = (count: number): void => {
     for (let i = 0; i < count; i++) {
       mod._geowasm_skip_render(i < count - 1 ? 1 : 0);
       const samps = mod._geowasm_exec();
       if (samps > 0) {
         const ptr = mod._geowasm_audio_ptr();
-        const heap = audioHeap();
-        const chunk = heap.slice(ptr >> 1, (ptr >> 1) + samps);
+        const chunk = mod.HEAP16.slice(ptr >> 1, (ptr >> 1) + samps);
         sink.port.postMessage(chunk, [chunk.buffer]);
         enqueuedFrames += samps >> 1;
       }
@@ -497,6 +744,13 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
   const tick = (now: number): void => {
     if (!running || paused) return;
     rafId = requestAnimationFrame(tick);
+
+    pollGamepads();
+    if (device === 'irrmaze') {
+      mod._geowasm_input_axis(mouseDx * TRACKBALL_SCALE, mouseDy * TRACKBALL_SCALE);
+      mouseDx = 0;
+      mouseDy = 0;
+    }
 
     let frames = 0;
     if (audioCtx.state === 'running') {
@@ -537,9 +791,9 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
 
   const setInput = (map: InputPreset | KeyMap): void => {
     if (typeof map === 'string') {
-      buildKeymap(DEFAULT_KEYMAP);
+      buildKeymap(defaultKeymap());
     } else {
-      buildKeymap({ ...DEFAULT_KEYMAP, ...map });
+      buildKeymap({ ...defaultKeymap(), ...map });
     }
   };
 
@@ -586,8 +840,7 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
           `geolith: state size mismatch (got ${data.length}, expected ${size})`,
         );
       }
-      const ptr = mod._malloc(size);
-      mod.HEAPU8.set(data, ptr);
+      const ptr = heapAlloc(mod, data);
       const ok = mod._geowasm_state_load(ptr);
       mod._free(ptr);
       if (!ok) throw new Error('geolith: failed to load state');
@@ -625,6 +878,7 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('pointerdown', resumeAudio);
       window.removeEventListener('keydown', resumeAudio);
+      canvas.removeEventListener('mousemove', onMouseMove);
       sink.disconnect();
       gain.disconnect();
       void audioCtx.close();

@@ -30,7 +30,7 @@ async function main() {
     locateFile: (p) => path.join(projectDir, 'dist/geolith', p),
   });
 
-  mod._geowasm_setup(system, region, SAMPLERATE);
+  mod._geowasm_setup(system, region, SAMPLERATE, 1 /* unihw: MVS */);
   mod._geowasm_set_dips(0, 0);
 
   const bios = fs.readFileSync(biosPath);

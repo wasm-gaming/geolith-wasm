@@ -16,9 +16,9 @@ export const manifest: EngineManifest = {
       key: 'rom',
       mountPath: '/rom.neo',
       required: true,
-      accept: ['.neo'],
+      accept: ['.neo', '.zip'],
       description:
-        'Neo Geo cartridge in TerraOnion NeoSD .neo format (one file per game; convert MAME sets with NeoBuilder).',
+        'Neo Geo cartridge in TerraOnion NeoSD .neo format (convert MAME sets with NeoBuilder), or — for the experimental CD systems — a zip of the disc image (.cue + .bin).',
     },
     {
       key: 'bios',
@@ -26,7 +26,15 @@ export const manifest: EngineManifest = {
       required: true,
       accept: ['.zip'],
       description:
-        'MAME-format BIOS zip: neogeo.zip for MVS/Universe BIOS mode, aes.zip for AES console mode.',
+        'MAME-format BIOS zip: neogeo.zip for MVS/Universe BIOS mode, aes.zip for AES console mode, neocd.zip / neocdz.zip for the CD systems.',
+    },
+    {
+      key: 'bios2',
+      mountPath: '/bios2.zip',
+      required: false,
+      accept: ['.zip'],
+      description:
+        'Auxiliary BIOS zip: neocdz.zip when system is cdf/cdt (supplies 000-lo.lo), or irrmaze.zip for The Irritating Maze.',
     },
   ],
   input: 'geolith',

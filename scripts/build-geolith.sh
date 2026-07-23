@@ -81,9 +81,9 @@ LDFLAGS=(
     -sINITIAL_MEMORY=134217728   # 128MB: biggest .neo carts are ~96MB
     -sMAXIMUM_MEMORY=536870912
     -sSTACK_SIZE=1048576
-    -sFILESYSTEM=0
+    # MEMFS stays enabled: the CD path unzips cue/bin images into /disc/.
     -sEXPORTED_FUNCTIONS="${EXPORTED_FUNCS}"
-    -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAP16,HEAPU32
+    -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAP16,HEAPU32,ccall
 )
 
 echo "Compiling Geolith core + shim with emcc..."

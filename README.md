@@ -25,16 +25,21 @@ locks speed to the audio hardware with no resampling drift.
 
 ## ROM format
 
-Geolith loads **TerraOnion NeoSD `.neo` files only** (one file per game).
-Convert MAME-format Neo Geo ROM sets with
-[NeoBuilder](https://wiki.terraonion.com/index.php/Neobuilder_Guide). A
-MAME-format BIOS zip is also required:
+Geolith loads **TerraOnion NeoSD `.neo` files** for cartridge systems (one
+file per game). Convert MAME-format Neo Geo ROM sets with
+[NeoBuilder](https://wiki.terraonion.com/index.php/Neobuilder_Guide). For the
+experimental CD systems, pass a **zip of the disc image** (`.cue` + `.bin`)
+as the `rom` asset. A MAME-format BIOS zip is always required:
 
-| System (`options.system`) | BIOS asset |
-|---------------------------|-----------|
-| `mvs` (arcade, default)   | `neogeo.zip` |
-| `uni` (Universe BIOS)     | `neogeo.zip` (with `uni-bios.rom` inside) |
-| `aes` (home console)      | `aes.zip` |
+| System (`options.system`) | BIOS assets |
+|---------------------------|-------------|
+| `mvs` (arcade, default)   | `bios`: neogeo.zip |
+| `uni` (Universe BIOS)     | `bios`: neogeo.zip (with `uni-bios_4_0.rom` inside) |
+| `aes` (home console)      | `bios`: aes.zip |
+| `cdf` / `cdt` (Neo Geo CD, experimental) | `bios`: neocd.zip, `bios2`: neocdz.zip |
+| `cdz` / `cdu` (CDZ, experimental) | `bios`: neocdz.zip |
+
+The Irritating Maze additionally takes `bios2`: irrmaze.zip.
 
 ## Contract surface
 
@@ -57,14 +62,21 @@ engine.start();
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `system` | `mvs` | `aes` (console), `mvs` (arcade), `uni` (Universe BIOS). |
+| `system` | `mvs` | `aes`, `mvs`, `uni`, or (experimental) `cdf`/`cdt`/`cdz`/`cdu`. |
 | `region` | `us` | `us`, `jp`, `as`, `eu`. |
+| `unihw` | `mvs` | Hardware the Universe BIOS should detect (`uni` only). |
+| `inputMode` | `auto` | `auto` (game-database controllers), `joystick`, `mahjong`, `4p` (NEO-FTC1B; MVS + JP/AS only). |
 | `renderFilter` | `pixelated` | `pixelated` (crisp) or `smooth` (linear). |
 | `overscanMask` | `8` | Pixels masked per edge; 8 → standard 304×224 picture. |
 | `freeplay` | `false` | MVS freeplay DIP switch (no coins needed). |
 | `settingMode` | `false` | MVS setting-mode DIP (hardware menu at boot). |
 | `memcard` | `true` | Emulate an inserted memory card. |
+| `memcardWriteProtect` | `false` | Write-protect the memory card. |
+| `rawPalette` | `false` | Raw palette instead of the resistor network. |
+| `adpcmWrap` | `true` | ADPCM wrap; disable to fix SFX in Ganryu etc. |
+| `overclock` | `false` | Disable the 68K clock divider. |
 | `volume` | `1.0` | Master audio volume. |
+| `gamepads` | `true` | Poll gamepads (standard mapping) each frame. |
 
 ### Capabilities
 
@@ -84,6 +96,16 @@ engine.start();
 | Select | 3 (or Right Shift) | 4 |
 | Coin 1 / Coin 2 | 5 | 6 |
 | Service / Test | 9 | F2 |
+
+Gamepads (standard mapping) are polled automatically: d-pad/left stick,
+face buttons → A/B/C/D, Start → start, Back/Select → coin, LB → select.
+
+Special controllers are wired automatically for games that need them
+(`inputMode: 'auto'`): the **mahjong panel** (tiles A–N on the letter keys,
+Pon/Chi/Kan/Reach/Ron on O/P/[/]/\\), **V-Liner** buttons, and the
+**Irritating Maze trackball** (mouse movement over the canvas, Z/X/C/V
+buttons). `inputMode: '4p'` adds P3 (R/F/T/Y + 7/8, F3) and P4 (numpad,
+F4) for the NEO-FTC1B 4-player board.
 
 Rebind via `engine.setInput({ 'p1.a': 'KeyJ', ... })` (KeyboardEvent codes).
 

@@ -12,21 +12,23 @@ re-implements the same wiring against the core's own headers (`geo.h`,
 
 | Upstream capability | This wrapper |
 |---------------------|--------------|
-| Cartridge systems: AES / MVS / Universe BIOS | ✅ `options.system` |
+| Cartridge systems: AES / MVS / Universe BIOS | ✅ `options.system` (+ `unihw` for UniBIOS hardware detect) |
 | Regions US/JP/AS/EU | ✅ `options.region` |
 | TerraOnion `.neo` loading (`geo_neo_load`) | ✅ `assets.rom` |
-| BIOS zip from memory (`geo_bios_load_mem`, miniz) | ✅ `assets.bios` |
+| BIOS zip from memory (`geo_bios_load_mem[_aux]`, miniz) | ✅ `assets.bios` + optional `assets.bios2` |
 | Video: XRGB8888 320×264 buffer, visible 304×224 | ✅ RGBA-converted crop → 2D canvas (`overscanMask`) |
 | Audio: YM2610 → Speex resampler → int16 stereo | ✅ resampled to the AudioContext rate, AudioWorklet sink |
-| Input: 2 Neo Geo joysticks + system buttons + DIPs | ✅ keyboard, rebindable (`setInput`) |
+| Input: 2 Neo Geo joysticks + system buttons + DIPs | ✅ keyboard + gamepads, rebindable (`setInput`) |
+| Mahjong / V-Liner / trackball (Irritating Maze) inputs | ✅ auto-selected from the `.neo` database flags (`inputMode`); trackball = mouse |
+| 4-player NEO-FTC1B mode | ✅ `inputMode: '4p'` (MVS + JP/AS) |
 | Save states (`geo_state_save_raw` etc.) | ✅ `saveState`/`loadState` |
-| NVRAM / cart SRAM / memory card (`geo_mem_ptr`) | ✅ persisted to OPFS |
+| NVRAM / cart SRAM / memory card / CD backup RAM | ✅ persisted to OPFS (`geo_mem_ptr`) |
 | MVS DIPs: freeplay, setting mode | ✅ options |
-| Palettes: resistor network / raw | ➖ fixed to resistor network |
-| Neo Geo CD / CDZ (`.cue`, `.chd`) | ❌ not wired (sources compiled, CHD off, no disc API exposed) |
-| Mahjong / trackball (Irritating Maze) / V-Liner inputs | ❌ standard joysticks only |
-| 4-player FTC1B mode | ❌ |
-| Overclocking (`geo_set_div68k`), watchdog tuning | ❌ upstream defaults |
+| Palettes: resistor network / raw | ✅ `rawPalette` |
+| ADPCM wrap hack, 68K overclock (`geo_set_div68k`) | ✅ `adpcmWrap`, `overclock` |
+| Neo Geo CD / CDZ (`.cue`+`.bin` zip) | ⚠️ **experimental, untested** — wired end-to-end (miniz unzip → MEMFS → `geo_disc_open` → `geo_cd_postload`) but not yet verified against a real BIOS/disc image |
+| `.chd` disc images | ❌ CHD support compiled out (needs libchdr) |
+| Watchdog tolerance tuning | ❌ upstream default |
 
 ## Timing model
 
@@ -47,4 +49,6 @@ re-implements the same wiring against the core's own headers (`geo.h`,
 - The BIOS zip is extracted to core-owned heap; the SDK frees its staging
   copy right after `geo_bios_load_mem`.
 - Built with `ALLOW_MEMORY_GROWTH` + 128 MB initial heap (largest retail
-  `.neo` carts are ~96 MB); no filesystem (`-sFILESYSTEM=0`).
+  `.neo` carts are ~96 MB). Emscripten MEMFS is enabled solely for the CD
+  path (disc zips are unpacked to `/disc/` in the shim); cartridge mode
+  touches no filesystem.
