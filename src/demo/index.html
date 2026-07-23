@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Geolith WASM — Neo Geo Demo</title>
+    <link rel="icon" href="data:," />
+
+    <!-- Base theme from the engine-specs demo template, then our Neo Geo skin.
+         geolith.css is loaded last so its :root token overrides win. -->
+    <link rel="stylesheet" href="./demo.css" />
+    <link rel="stylesheet" href="./geolith.css" />
+  </head>
+  <body>
+    <main></main>
+
+    <!-- Hand the Geolith SDK to the template shell (sdk.js picks up window.SDK),
+         then boot the shared demo.js. Order matters: SDK must exist before
+         demo.js runs its top-level getSdk(). -->
+    <script type="module">
+      import sdk from "./geolith/geolith.sdk.js";
+      window.SDK = sdk;
+
+      // Geolith cannot boot without a system BIOS (neogeo.zip / aes.zip);
+      // `?bios=required` is the template's own knob, read from demo.js's
+      // import.meta.url — no fork needed.
+      await import("./demo.js?bios=required");
+    </script>
+  </body>
+</html>

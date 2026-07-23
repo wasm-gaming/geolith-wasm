@@ -1,0 +1,43 @@
+{
+  "name": "@wasm-gaming/geolith-wasm",
+  "version": "0.1.0",
+  "description": "Geolith (Neo Geo AES/MVS emulator) compiled to WebAssembly via Emscripten, with a JS SDK conforming to the wasm-gaming engine contract.",
+  "type": "module",
+  "main": "./dist/geolith/geolith.sdk.js",
+  "types": "./dist/geolith/geolith.sdk.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/geolith/geolith.sdk.d.ts",
+      "import": "./dist/geolith/geolith.sdk.js"
+    },
+    "./options": {
+      "types": "./dist/geolith/geolith.options.d.ts",
+      "import": "./dist/geolith/geolith.options.js"
+    },
+    "./manifest": "./dist/manifest.json"
+  },
+  "files": [
+    "dist/geolith/",
+    "dist/manifest.json",
+    "src/geolith.manifest.ts",
+    "src/geolith.options.ts",
+    "src/geolith.sdk.ts",
+    "README.md"
+  ],
+  "comment:scripts": "Build logic lives in the Makefile, not here (make build / build-sdk / build-wasm / preview).",
+  "scripts": {},
+  "peerDependencies": {
+    "@wasm-gaming/engine-specs": "*"
+  },
+  "peerDependenciesMeta": {
+    "@wasm-gaming/engine-specs": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@wasm-gaming/engine-specs": "^0.2.3",
+    "typescript": "^5.5.0"
+  },
+  "engineContract": "https://github.com/wasm-gaming/engine-specs",
+  "license": "MIT"
+}
