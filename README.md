@@ -16,7 +16,7 @@ It conforms to the [`@wasm-gaming/engine-specs`](https://github.com/wasm-gaming/
 contract (`EngineSDK` = `{ manifest, load }`).
 
 Unlike the SDL-based ports, Geolith's core is frontend-free pure C11, so this
-package ships a small custom C shim ([shim/geo_shim.c](shim/geo_shim.c))
+package ships a small custom C shim ([scripts/shim/geo_shim.c](scripts/shim/geo_shim.c))
 instead of an Emscripten SDL layer: **no ASYNCIFY, no SDL, no emulated GL**.
 The JS SDK drives one `geo_exec()` per frame, blits the framebuffer to a 2D
 canvas, and streams audio through an `AudioWorklet` ring buffer. Emulation is

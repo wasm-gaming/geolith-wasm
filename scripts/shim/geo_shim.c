@@ -105,6 +105,11 @@ static int cfg_region = REGION_US;
 static int cfg_unihw = SYSTEM_MVS;
 static int cfg_input_mode = INPUT_MODE_AUTO;
 
+/* Lowest geo_loglevel that reaches the console. GEO_LOG_DBG is per-write
+   tracing (REG_NOSHADOW and friends) that floods devtools and costs a
+   fd_write round trip per line, so it is off unless asked for. */
+static int cfg_loglevel = GEO_LOG_INF;
+
 /* Controller port poll: active-low hardware bits from active-high JS mask. */
 static unsigned shim_poll_js(unsigned port) {
     unsigned b = 0xff;
@@ -390,6 +395,10 @@ static void shim_params_input(void) {
 static void shim_log(int level, const char *fmt, ...) {
     char line[512];
     va_list va;
+
+    if (level < cfg_loglevel)
+        return; /* before vsnprintf: the formatting is the expensive part */
+
     va_start(va, fmt);
     vsnprintf(line, sizeof(line), fmt, va);
     va_end(va);
@@ -649,6 +658,12 @@ KEEPALIVE void geowasm_set_adpcm_wrap(int wrap) {
 /* Overclock: disable the 68K clock divider. */
 KEEPALIVE void geowasm_set_overclock(int oc) {
     geo_set_div68k(!oc);
+}
+
+/* Lowest log level that reaches the console, as a geo_loglevel (0 = DBG,
+   1 = INF, 2 = WRN, 3 = ERR). Pass 5 to silence everything. */
+KEEPALIVE void geowasm_set_loglevel(int level) {
+    cfg_loglevel = level;
 }
 
 /* ------------------------------------------------------------ save states */

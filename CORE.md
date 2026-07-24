@@ -4,7 +4,7 @@ Upstream: https://gitlab.com/jgemu/geolith (pinned in
 [scripts/build-geolith.sh](scripts/build-geolith.sh), see `GEOLITH_REF`).
 
 Geolith is a Jolly Good API core; upstream `jg.c` is its only frontend
-binding. This port **does not compile jg.c** — [shim/geo_shim.c](shim/geo_shim.c)
+binding. This port **does not compile jg.c** — [scripts/shim/geo_shim.c](scripts/shim/geo_shim.c)
 re-implements the same wiring against the core's own headers (`geo.h`,
 `geo_lspc.h`, `geo_mixer.h`, `geo_neo.h`) with a flat C ABI for JS.
 

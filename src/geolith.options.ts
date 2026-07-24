@@ -8,6 +8,7 @@ import type { JSONSchema } from '@wasm-gaming/engine-specs';
 export type GeolithSystem = 'aes' | 'mvs' | 'uni' | 'cdf' | 'cdt' | 'cdz' | 'cdu';
 export type GeolithRegion = 'us' | 'jp' | 'as' | 'eu';
 export type GeolithInputMode = 'auto' | 'joystick' | 'mahjong' | '4p';
+export type GeolithLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'off';
 
 export interface GeolithOptions {
   /**
@@ -62,6 +63,12 @@ export interface GeolithOptions {
   volume?: number;
   /** Poll connected gamepads (standard mapping) each frame. */
   gamepads?: boolean;
+  /**
+   * Lowest core log level printed to the console. `debug` includes upstream's
+   * per-write hardware tracing (REG_NOSHADOW and friends), which is thousands
+   * of lines per second — useful when debugging a game, not otherwise.
+   */
+  logLevel?: GeolithLogLevel;
 }
 
 export const DEFAULT_GEOLITH_OPTIONS: Required<GeolithOptions> = {
@@ -80,6 +87,16 @@ export const DEFAULT_GEOLITH_OPTIONS: Required<GeolithOptions> = {
   overclock: false,
   volume: 1.0,
   gamepads: true,
+  logLevel: 'info',
+};
+
+/** Numeric ids matching enum geo_loglevel in geo.h (`off` is above GEO_LOG_SCR). */
+export const GEOLITH_LOG_LEVEL_IDS: Record<GeolithLogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+  off: 5,
 };
 
 /** Numeric ids matching the SYSTEM_ and REGION_ defines in geo.h. */
@@ -100,7 +117,7 @@ export const GEOLITH_REGION_IDS: Record<GeolithRegion, number> = {
   eu: 3,
 };
 
-/** Numeric ids matching INPUT_MODE_* in shim/geo_shim.c. */
+/** Numeric ids matching INPUT_MODE_* in scripts/shim/geo_shim.c. */
 export const GEOLITH_INPUT_MODE_IDS: Record<GeolithInputMode, number> = {
   auto: 0,
   joystick: 1,
@@ -197,6 +214,13 @@ export const GEOLITH_OPTIONS_SCHEMA: JSONSchema = {
       type: 'boolean',
       default: true,
       description: 'Poll connected gamepads (standard mapping) each frame.',
+    },
+    logLevel: {
+      type: 'string',
+      enum: ['debug', 'info', 'warn', 'error', 'off'],
+      default: 'info',
+      description:
+        'Lowest core log level printed to the console. debug adds per-write hardware tracing (thousands of lines per second).',
     },
   },
 };

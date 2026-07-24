@@ -6,7 +6,8 @@ set -euo pipefail
 # Unlike FBNeo/BlastEm, Geolith needs no upstream-makefile surgery: the core
 # is pure C11 with vendored deps (miniz, speex resampler) and a pre-generated
 # m68kops.c, so we compile the enumerated source list directly with emcc and
-# link our shim (shim/geo_shim.c) in place of the Jolly Good frontend (jg.c).
+# link our shim (scripts/shim/geo_shim.c) in place of the Jolly Good frontend
+# (jg.c).
 #
 # Outputs: dist/geolith/geolith.js (MODULARIZE factory `createGeolithModule`)
 #          dist/geolith/geolith.wasm
@@ -90,7 +91,7 @@ echo "Compiling Geolith core + shim with emcc..."
 emcc \
     "${CFLAGS[@]}" \
     "${CORE_SRCS[@]}" \
-    "${PROJECT_DIR}/shim/geo_shim.c" \
+    "${PROJECT_DIR}/scripts/shim/geo_shim.c" \
     "${LDFLAGS[@]}" \
     -o "${OUT_DIR}/geolith.js"
 

@@ -10,6 +10,7 @@ import { manifest } from './geolith.manifest.js';
 import {
   DEFAULT_GEOLITH_OPTIONS,
   GEOLITH_INPUT_MODE_IDS,
+  GEOLITH_LOG_LEVEL_IDS,
   GEOLITH_REGION_IDS,
   GEOLITH_SYSTEM_IDS,
   type GeolithOptions,
@@ -22,14 +23,15 @@ export { manifest };
  * Shape of the Emscripten module produced by scripts/build-geolith.sh
  * (`-sMODULARIZE -sEXPORT_NAME=createGeolithModule`, heap views + ccall
  * exported). All engine entry points are flat C exports from
- * shim/geo_shim.c — no SDL, no main loop, no ASYNCIFY: the SDK drives one
- * `_geowasm_exec()` per emulated frame.
+ * scripts/shim/geo_shim.c — no SDL, no main loop, no ASYNCIFY: the SDK
+ * drives one `_geowasm_exec()` per emulated frame.
  */
 type GeolithModule = {
   HEAPU8: Uint8Array;
   HEAP16: Int16Array;
   _malloc(size: number): number;
   _free(ptr: number): void;
+  _geowasm_set_loglevel(level: number): void;
   _geowasm_setup(system: number, region: number, samplerate: number, unihw: number): void;
   _geowasm_load_bios(ptr: number, size: number): number;
   _geowasm_load_bios_aux(ptr: number, size: number): number;
@@ -518,6 +520,8 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
   });
 
   // ----------------------------------------------------------------- boot
+  // Before setup: geowasm_setup installs the log callback and starts logging.
+  mod._geowasm_set_loglevel(GEOLITH_LOG_LEVEL_IDS[opts.logLevel]);
   mod._geowasm_setup(
     GEOLITH_SYSTEM_IDS[opts.system],
     GEOLITH_REGION_IDS[opts.region],
