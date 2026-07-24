@@ -1,6 +1,6 @@
 {
   "name": "@wasm-gaming/geolith-wasm",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Geolith (Neo Geo AES/MVS emulator) compiled to WebAssembly via Emscripten, with a JS SDK conforming to the wasm-gaming engine contract.",
   "repository": {
     "type": "git",
