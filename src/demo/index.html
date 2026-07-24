@@ -19,7 +19,23 @@
          demo.js runs its top-level getSdk(). -->
     <script type="module">
       import sdk from "./geolith/geolith.sdk.js";
-      window.SDK = sdk;
+
+      // The template shell only passes fileName/byteLength, so the hardware
+      // options keep their defaults (mvs/us — which demands neogeo.zip). These
+      // decide *which* BIOS file the core looks for inside the zip, so expose
+      // them as page query params: ?system=aes, ?system=uni&region=jp, ...
+      const params = new URLSearchParams(location.search);
+      const overrides = {};
+      for (const key of ["system", "region", "unihw"]) {
+        const value = params.get(key);
+        if (value) overrides[key] = value;
+      }
+
+      window.SDK = {
+        ...sdk,
+        load: (config) =>
+          sdk.load({ ...config, options: { ...config.options, ...overrides } }),
+      };
 
       // Geolith cannot boot without a system BIOS (neogeo.zip / aes.zip);
       // `?bios=required` is the template's own knob, read from demo.js's

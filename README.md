@@ -33,13 +33,18 @@ as the `rom` asset. A MAME-format BIOS zip is always required:
 
 | System (`options.system`) | BIOS assets |
 |---------------------------|-------------|
-| `mvs` (arcade, default)   | `bios`: neogeo.zip |
 | `uni` (Universe BIOS)     | `bios`: neogeo.zip (with `uni-bios_4_0.rom` inside) |
+| `mvs` (arcade)            | `bios`: neogeo.zip |
 | `aes` (home console)      | `bios`: aes.zip |
 | `cdf` / `cdt` (Neo Geo CD, experimental) | `bios`: neocd.zip, `bios2`: neocdz.zip |
 | `cdz` / `cdu` (CDZ, experimental) | `bios`: neocdz.zip |
 
 The Irritating Maze additionally takes `bios2`: irrmaze.zip.
+
+For the cartridge systems `options.system` may be left unset — it is inferred
+from the BIOS zip: neogeo.zip → `uni` (or `mvs` if it has no
+`uni-bios_4_0.rom`), aes.zip → `aes`. Setting it explicitly always wins, and
+is required for the CD systems.
 
 ## Contract surface
 
@@ -52,7 +57,7 @@ const engine = await load({
     rom: neoFileBytes,            // TerraOnion .neo cartridge image
     bios: neogeoZipBytes,         // MAME-format neogeo.zip / aes.zip
   },
-  options: { system: 'mvs', region: 'us' },
+  options: { system: 'uni', region: 'us' },
   onEvent: (e) => console.log(e),
 });
 engine.start();
@@ -62,7 +67,7 @@ engine.start();
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `system` | `mvs` | `aes`, `mvs`, `uni`, or (experimental) `cdf`/`cdt`/`cdz`/`cdu`. |
+| `system` | auto | Detected from the BIOS zip (see above); set explicitly to override. `aes`, `mvs`, `uni`, or (experimental) `cdf`/`cdt`/`cdz`/`cdu`. |
 | `region` | `us` | `us`, `jp`, `as`, `eu`. |
 | `unihw` | `mvs` | Hardware the Universe BIOS should detect (`uni` only). |
 | `inputMode` | `auto` | `auto` (game-database controllers), `joystick`, `mahjong`, `4p` (NEO-FTC1B; MVS + JP/AS only). |

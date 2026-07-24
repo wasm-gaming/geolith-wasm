@@ -14,6 +14,9 @@ export interface GeolithOptions {
    * Hardware to emulate. Determines which BIOS zip the core expects:
    * aes.zip (aes), neogeo.zip (mvs/uni), neocd.zip + neocdz.zip (cdf/cdt),
    * neocdz.zip (cdz/cdu).
+   *
+   * Left unset, the cartridge systems are inferred from the BIOS zip's
+   * contents; the CD systems must be selected explicitly.
    */
   system?: GeolithSystem;
   /** Hardware region. Affects language/censorship in many games. */
@@ -62,7 +65,7 @@ export interface GeolithOptions {
 }
 
 export const DEFAULT_GEOLITH_OPTIONS: Required<GeolithOptions> = {
-  system: 'mvs',
+  system: 'uni',
   region: 'us',
   unihw: 'mvs',
   inputMode: 'auto',
@@ -112,9 +115,9 @@ export const GEOLITH_OPTIONS_SCHEMA: JSONSchema = {
     system: {
       type: 'string',
       enum: ['aes', 'mvs', 'uni', 'cdf', 'cdt', 'cdz', 'cdu'],
-      default: 'mvs',
+      default: 'uni',
       description:
-        'Hardware to emulate: aes (console, aes.zip), mvs (arcade, neogeo.zip), uni (Universe BIOS, neogeo.zip), or the experimental CD systems cdf/cdt (neocd.zip + neocdz.zip) and cdz/cdu (neocdz.zip).',
+        'Hardware to emulate: aes (console, aes.zip), mvs (arcade, neogeo.zip), uni (Universe BIOS, neogeo.zip), or the experimental CD systems cdf/cdt (neocd.zip + neocdz.zip) and cdz/cdu (neocdz.zip). Unset, the cartridge systems are inferred from the BIOS zip.',
     },
     region: {
       type: 'string',

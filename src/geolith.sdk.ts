@@ -13,6 +13,7 @@ import {
   GEOLITH_REGION_IDS,
   GEOLITH_SYSTEM_IDS,
   type GeolithOptions,
+  type GeolithSystem,
 } from './geolith.options.js';
 
 export { manifest };
@@ -312,6 +313,62 @@ function toUint8(x: AssetData | undefined | unknown): Uint8Array | null {
   throw new TypeError('geolith: asset must be Uint8Array | ArrayBuffer | string');
 }
 
+/**
+ * Read the member names out of a zip's central directory. Names are all that
+ * is needed to tell one MAME BIOS set from another, so nothing is inflated
+ * here — the core's miniz still does the real extraction.
+ */
+function listZipNames(zip: Uint8Array): Set<string> {
+  const names = new Set<string>();
+  if (zip.length < 22) return names;
+  const dv = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+
+  // The end-of-central-directory record trails a comment of up to 64 KiB.
+  let eocd = -1;
+  const limit = Math.max(0, zip.length - 22 - 0xffff);
+  for (let i = zip.length - 22; i >= limit; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return names;
+
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  const decoder = new TextDecoder();
+  for (let i = 0; i < count && off + 46 <= zip.length; i++) {
+    if (dv.getUint32(off, true) !== 0x02014b50) break; // central file header
+    const nameLen = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const commentLen = dv.getUint16(off + 32, true);
+    names.add(decoder.decode(zip.subarray(off + 46, off + 46 + nameLen)));
+    off += 46 + nameLen + extraLen + commentLen;
+  }
+  return names;
+}
+
+/**
+ * Infer the cartridge system from the BIOS zip, so dropping in neogeo.zip or
+ * aes.zip works without also setting `options.system`.
+ *
+ * `sfix.sfix` + `sm1.sm1` are the MVS-only ROMs that separate an arcade set
+ * from a console one. The Universe BIOS needs them too (geo.c treats
+ * SYSTEM_UNI as MVS-class), so `uni` can only win on an MVS set — every
+ * aes.zip also ships uni-bios_*.rom, and those alone are not enough to boot.
+ *
+ * Returns null for anything else (CD sets, unrecognised zips); the caller
+ * then keeps its configured default.
+ */
+function detectCartSystem(bios: Uint8Array): GeolithSystem | null {
+  const names = listZipNames(bios);
+  if (names.has('sfix.sfix') && names.has('sm1.sm1')) {
+    return names.has('uni-bios_4_0.rom') ? 'uni' : 'mvs';
+  }
+  if (names.has('neo-epo.bin') || names.has('neo-po.bin')) return 'aes';
+  return null;
+}
+
 function resolveCanvas(config: EngineConfig): HTMLCanvasElement {
   const c =
     (config as { canvasEl?: HTMLCanvasElement }).canvasEl ??
@@ -360,13 +417,6 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
     }
   };
 
-  const opts: Required<GeolithOptions> = {
-    ...DEFAULT_GEOLITH_OPTIONS,
-    ...(config.options as GeolithOptions | undefined),
-  };
-
-  const isCd = GEOLITH_SYSTEM_IDS[opts.system] >= 3;
-
   const romBytes = toUint8(assets?.rom ?? assets?.data);
   if (!romBytes) {
     throw new Error(
@@ -379,6 +429,28 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
       'geolith: no BIOS provided — pass assets.bios (MAME neogeo.zip for MVS/Universe, aes.zip for AES, neocd.zip/neocdz.zip for CD)',
     );
   }
+
+  // An explicit options.system always wins; otherwise the BIOS zip picks the
+  // system, since a set that cannot supply the required ROMs would only fail
+  // in the core. DEFAULT_GEOLITH_OPTIONS.system is the last resort.
+  const requested = config.options as GeolithOptions | undefined;
+  const opts: Required<GeolithOptions> = {
+    ...DEFAULT_GEOLITH_OPTIONS,
+    ...requested,
+    system:
+      requested?.system ??
+      detectCartSystem(biosBytes) ??
+      DEFAULT_GEOLITH_OPTIONS.system,
+  };
+
+  const isCd = GEOLITH_SYSTEM_IDS[opts.system] >= 3;
+
+  // Arcade-board features (trackball, 4-player NEO-FTC1B) key off the board,
+  // not the BIOS: the Universe BIOS also runs on MVS hardware when it is told
+  // to detect it. Same test the shim uses to idle the coin 3/4 status bits.
+  const isMvsHw =
+    opts.system === 'mvs' || (opts.system === 'uni' && opts.unihw === 'mvs');
+
   const bios2Bytes = toUint8(assets?.bios2);
   if (isCd && (opts.system === 'cdf' || opts.system === 'cdt') && !bios2Bytes) {
     throw new Error(
@@ -559,14 +631,14 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
       (opts.inputMode === 'auto' && neoFlags & DB_MAHJONG)
     )
       return 'mahjong';
-    if (neoFlags & DB_IRRMAZE && opts.system === 'mvs') return 'irrmaze';
+    if (neoFlags & DB_IRRMAZE && isMvsHw) return 'irrmaze';
     if (neoFlags & DB_VLINER) return 'vliner';
     return 'js';
   })();
   const fourPlayer =
     device === 'js' &&
     opts.inputMode === '4p' &&
-    opts.system === 'mvs' &&
+    isMvsHw &&
     (opts.region === 'jp' || opts.region === 'as');
 
   const keyMasks = [0, 0, 0, 0];
